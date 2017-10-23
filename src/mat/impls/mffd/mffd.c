@@ -126,6 +126,8 @@ PetscErrorCode  MatMFFDSetType(Mat mat,MatMFFDType ftype)
   PetscFunctionReturn(0);
 }
 
+static PetscErrorCode MatGetDiagonal_MFFD(Mat,Vec);
+
 typedef PetscErrorCode (*FCN1)(void*,Vec); /* force argument to next function to not be extern C*/
 static PetscErrorCode  MatMFFDSetFunctioniBase_MFFD(Mat mat,FCN1 func)
 {
@@ -133,6 +135,11 @@ static PetscErrorCode  MatMFFDSetFunctioniBase_MFFD(Mat mat,FCN1 func)
 
   PetscFunctionBegin;
   ctx->funcisetbase = func;
+  /* allow users to compose their own getdiagonal and allow MatHasOperation return false if the two functions pointers are not set */
+  if (!mat->ops->getdiagonal || mat->ops->getdiagonal == MatGetDiagonal_MFFD) {
+    mat->ops->getdiagonal = mat->ops->getdiagonal ? ( func ? mat->ops->getdiagonal : NULL) :
+                                                    ( (func && ctx->funci) ? MatGetDiagonal_MFFD : NULL);
+  }
   PetscFunctionReturn(0);
 }
 
@@ -143,6 +150,11 @@ static PetscErrorCode  MatMFFDSetFunctioni_MFFD(Mat mat,FCN2 funci)
 
   PetscFunctionBegin;
   ctx->funci = funci;
+  /* allow users to compose their own getdiagonal and allow MatHasOperation return false if the two functions pointers are not set */
+  if (!mat->ops->getdiagonal || mat->ops->getdiagonal == MatGetDiagonal_MFFD) {
+    mat->ops->getdiagonal = mat->ops->getdiagonal ? ( funci ? mat->ops->getdiagonal : NULL) :
+                                                    ( (funci && ctx->funcisetbase) ? MatGetDiagonal_MFFD : NULL);
+  }
   PetscFunctionReturn(0);
 }
 
@@ -203,6 +215,8 @@ static PetscErrorCode MatDestroy_MFFD(Mat mat)
   ierr = VecDestroy(&ctx->drscale);CHKERRQ(ierr);
   ierr = VecDestroy(&ctx->dlscale);CHKERRQ(ierr);
   ierr = VecDestroy(&ctx->dshift);CHKERRQ(ierr);
+  ierr = VecDestroy(&ctx->dshiftw);CHKERRQ(ierr);
+  ierr = VecDestroy(&ctx->current_u);CHKERRQ(ierr);
   if (ctx->current_f_allocated) {
     ierr = VecDestroy(&ctx->current_f);CHKERRQ(ierr);
   }
@@ -218,6 +232,16 @@ static PetscErrorCode MatDestroy_MFFD(Mat mat)
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDSetCheckh_C",NULL);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDSetPeriod_C",NULL);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDResetHHistory_C",NULL);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+static PetscErrorCode MatSetUp_MFFD(Mat mat)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  ierr = PetscLayoutSetUp(mat->rmap);CHKERRQ(ierr);
+  ierr = PetscLayoutSetUp(mat->cmap);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
 
@@ -366,8 +390,11 @@ static PetscErrorCode MatMult_MFFD(Mat mat,Vec a,Vec y)
     ierr = VecPointwiseMult(y,ctx->dlscale,y);CHKERRQ(ierr);
   }
   if (ctx->dshift) {
-    ierr = VecPointwiseMult(ctx->dshift,a,U);CHKERRQ(ierr);
-    ierr = VecAXPY(y,1.0,U);CHKERRQ(ierr);
+    if (!ctx->dshiftw) {
+      ierr = VecDuplicate(y,&ctx->dshiftw);CHKERRQ(ierr);
+    }
+    ierr = VecPointwiseMult(ctx->dshift,a,ctx->dshiftw);CHKERRQ(ierr);
+    ierr = VecAXPY(y,1.0,ctx->dshiftw);CHKERRQ(ierr);
   }
 
   if (mat->nullsp) {ierr = MatNullSpaceRemove(mat->nullsp,y);CHKERRQ(ierr);}
@@ -384,7 +411,7 @@ static PetscErrorCode MatMult_MFFD(Mat mat,Vec a,Vec y)
         u = current iterate
         h = difference interval
 */
-static PetscErrorCode MatGetDiagonal_MFFD(Mat mat,Vec a)
+PetscErrorCode MatGetDiagonal_MFFD(Mat mat,Vec a)
 {
   MatMFFD        ctx = (MatMFFD)mat->data;
   PetscScalar    h,*aa,*ww,v;
@@ -395,7 +422,7 @@ static PetscErrorCode MatGetDiagonal_MFFD(Mat mat,Vec a)
 
   PetscFunctionBegin;
   if (!ctx->funci) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_ORDER,"Requires calling MatMFFDSetFunctioni() first");
-
+  if (!ctx->funcisetbase) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_ORDER,"Requires calling MatMFFDSetFunctioniBase() first");
   w    = ctx->w;
   U    = ctx->current_u;
   ierr = (*ctx->func)(ctx->funcctx,U,a);CHKERRQ(ierr);
@@ -490,8 +517,13 @@ PETSC_EXTERN PetscErrorCode MatMFFDSetBase_MFFD(Mat J,Vec U,Vec F)
 
   PetscFunctionBegin;
   ierr = MatMFFDResetHHistory(J);CHKERRQ(ierr);
-
-  ctx->current_u = U;
+  if (!ctx->current_u) {
+    ierr = VecDuplicate(U,&ctx->current_u);CHKERRQ(ierr);
+    ierr = VecLockPush(ctx->current_u);CHKERRQ(ierr);
+  }
+  ierr = VecLockPop(ctx->current_u);CHKERRQ(ierr);
+  ierr = VecCopy(U,ctx->current_u);CHKERRQ(ierr);
+  ierr = VecLockPush(ctx->current_u);CHKERRQ(ierr);
   if (F) {
     if (ctx->current_f_allocated) {ierr = VecDestroy(&ctx->current_f);CHKERRQ(ierr);}
     ctx->current_f           = F;
@@ -502,7 +534,7 @@ PETSC_EXTERN PetscErrorCode MatMFFDSetBase_MFFD(Mat J,Vec U,Vec F)
     ctx->current_f_allocated = PETSC_TRUE;
   }
   if (!ctx->w) {
-    ierr = VecDuplicate(ctx->current_u, &ctx->w);CHKERRQ(ierr);
+    ierr = VecDuplicate(ctx->current_u,&ctx->w);CHKERRQ(ierr);
   }
   J->assembled = PETSC_TRUE;
   PetscFunctionReturn(0);
@@ -589,7 +621,6 @@ static PetscErrorCode  MatMFFDSetPeriod_MFFD(Mat mat,PetscInt period)
   MatMFFD ctx = (MatMFFD)mat->data;
 
   PetscFunctionBegin;
-  PetscValidLogicalCollectiveInt(mat,period,2);
   ctx->recomputeperiod = period;
   PetscFunctionReturn(0);
 }
@@ -609,7 +640,6 @@ static PetscErrorCode  MatMFFDSetFunctionError_MFFD(Mat mat,PetscReal error)
   MatMFFD ctx = (MatMFFD)mat->data;
 
   PetscFunctionBegin;
-  PetscValidLogicalCollectiveReal(mat,error,2);
   if (error != PETSC_DEFAULT) ctx->error_rel = error;
   PetscFunctionReturn(0);
 }
@@ -673,19 +703,16 @@ PETSC_EXTERN PetscErrorCode MatCreate_MFFD(Mat A)
 
   A->ops->mult            = MatMult_MFFD;
   A->ops->destroy         = MatDestroy_MFFD;
+  A->ops->setup           = MatSetUp_MFFD;
   A->ops->view            = MatView_MFFD;
   A->ops->assemblyend     = MatAssemblyEnd_MFFD;
-  A->ops->getdiagonal     = MatGetDiagonal_MFFD;
   A->ops->scale           = MatScale_MFFD;
   A->ops->shift           = MatShift_MFFD;
   A->ops->diagonalscale   = MatDiagonalScale_MFFD;
   A->ops->diagonalset     = MatDiagonalSet_MFFD;
   A->ops->setfromoptions  = MatSetFromOptions_MFFD;
   A->ops->missingdiagonal = MatMissingDiagonal_MFFD;
-  A->assembled           = PETSC_TRUE;
-
-  ierr = PetscLayoutSetUp(A->rmap);CHKERRQ(ierr);
-  ierr = PetscLayoutSetUp(A->cmap);CHKERRQ(ierr);
+  A->assembled            = PETSC_TRUE;
 
   ierr = PetscObjectComposeFunction((PetscObject)A,"MatMFFDSetBase_C",MatMFFDSetBase_MFFD);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)A,"MatMFFDSetFunctioniBase_C",MatMFFDSetFunctioniBase_MFFD);CHKERRQ(ierr);
@@ -779,7 +806,6 @@ PetscErrorCode  MatCreateMFFD(MPI_Comm comm,PetscInt m,PetscInt n,PetscInt M,Pet
   PetscFunctionReturn(0);
 }
 
-
 /*@
    MatMFFDGetH - Gets the last value that was used as the differencing
    parameter.
@@ -805,6 +831,8 @@ PetscErrorCode  MatMFFDGetH(Mat mat,PetscScalar *h)
   PetscBool      match;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(mat,MAT_CLASSID,1);
+  PetscValidPointer(h,2);
   ierr = PetscObjectTypeCompare((PetscObject)mat,MATMFFD,&match);CHKERRQ(ierr);
   if (!match) SETERRQ(PetscObjectComm((PetscObject)mat),PETSC_ERR_ARG_WRONG,"Not a MFFD matrix");
 
@@ -847,6 +875,7 @@ PetscErrorCode  MatMFFDSetFunction(Mat mat,PetscErrorCode (*func)(void*,Vec,Vec)
   PetscErrorCode ierr;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(mat,MAT_CLASSID,1);
   ierr = PetscTryMethod(mat,"MatMFFDSetFunction_C",(Mat,PetscErrorCode (*)(void*,Vec,Vec),void*),(mat,func,funcctx));CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
@@ -881,7 +910,6 @@ PetscErrorCode  MatMFFDSetFunctioni(Mat mat,PetscErrorCode (*funci)(void*,PetscI
   ierr = PetscTryMethod(mat,"MatMFFDSetFunctioni_C",(Mat,PetscErrorCode (*)(void*,PetscInt,Vec,PetscScalar*)),(mat,funci));CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
-
 
 /*@C
    MatMFFDSetFunctioniBase - Sets the base vector for a single component function evaluation
@@ -939,6 +967,8 @@ PetscErrorCode  MatMFFDSetPeriod(Mat mat,PetscInt period)
   PetscErrorCode ierr;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(mat,MAT_CLASSID,1);
+  PetscValidLogicalCollectiveInt(mat,period,2);
   ierr = PetscTryMethod(mat,"MatMFFDSetPeriod_C",(Mat,PetscInt),(mat,period));CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
@@ -977,6 +1007,8 @@ PetscErrorCode  MatMFFDSetFunctionError(Mat mat,PetscReal error)
   PetscErrorCode ierr;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(mat,MAT_CLASSID,1);
+  PetscValidLogicalCollectiveReal(mat,error,2);
   ierr = PetscTryMethod(mat,"MatMFFDSetFunctionError_C",(Mat,PetscReal),(mat,error));CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
@@ -1012,6 +1044,9 @@ PetscErrorCode  MatMFFDSetHHistory(Mat J,PetscScalar history[],PetscInt nhistory
   PetscBool      match;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(J,MAT_CLASSID,1);
+  if (history) PetscValidPointer(history,2);
+  PetscValidLogicalCollectiveInt(J,nhistory,3);
   ierr = PetscObjectTypeCompare((PetscObject)J,MATMFFD,&match);CHKERRQ(ierr);
   if (!match) SETERRQ(PetscObjectComm((PetscObject)J),PETSC_ERR_ARG_WRONG,"Not a MFFD matrix");
   ctx->historyh    = history;
@@ -1019,7 +1054,6 @@ PetscErrorCode  MatMFFDSetHHistory(Mat J,PetscScalar history[],PetscInt nhistory
   ctx->currenth    = 0.;
   PetscFunctionReturn(0);
 }
-
 
 /*@
    MatMFFDResetHHistory - Resets the counter to zero to begin
@@ -1046,10 +1080,10 @@ PetscErrorCode  MatMFFDResetHHistory(Mat J)
   PetscErrorCode ierr;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(J,MAT_CLASSID,1);
   ierr = PetscTryMethod(J,"MatMFFDResetHHistory_C",(Mat),(J));CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
-
 
 /*@
     MatMFFDSetBase - Sets the vector U at which matrix vector products of the
@@ -1147,6 +1181,9 @@ PetscErrorCode  MatMFFDCheckPositivity(void *dummy,Vec U,Vec a,PetscScalar *h)
   MPI_Comm       comm;
 
   PetscFunctionBegin;
+  PetscValidHeaderSpecific(U,VEC_CLASSID,2);
+  PetscValidHeaderSpecific(a,VEC_CLASSID,3);
+  PetscValidPointer(h,4);
   ierr   = PetscObjectGetComm((PetscObject)U,&comm);CHKERRQ(ierr);
   ierr   = VecGetArray(U,&u_vec);CHKERRQ(ierr);
   ierr   = VecGetArray(a,&a_vec);CHKERRQ(ierr);
@@ -1168,10 +1205,3 @@ PetscErrorCode  MatMFFDCheckPositivity(void *dummy,Vec U,Vec a,PetscScalar *h)
   }
   PetscFunctionReturn(0);
 }
-
-
-
-
-
-
-
