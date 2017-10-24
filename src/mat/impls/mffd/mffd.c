@@ -135,10 +135,10 @@ static PetscErrorCode  MatMFFDSetFunctioniBase_MFFD(Mat mat,FCN1 func)
 
   PetscFunctionBegin;
   ctx->funcisetbase = func;
-  /* allow users to compose their own getdiagonal and allow MatHasOperation return false if the two functions pointers are not set */
-  if (!mat->ops->getdiagonal || mat->ops->getdiagonal == MatGetDiagonal_MFFD) {
-    mat->ops->getdiagonal = mat->ops->getdiagonal ? ( func ? mat->ops->getdiagonal : NULL) :
-                                                    ( (func && ctx->funci) ? MatGetDiagonal_MFFD : NULL);
+  /* allow users to compose their own getdiagonal and allow MatHasOperation
+     to return false if the two functions pointers are not set */
+  if (!mat->ops->getdiagonal && func) {
+    mat->ops->getdiagonal == MatGetDiagonal_MFFD;
   }
   PetscFunctionReturn(0);
 }
@@ -150,10 +150,10 @@ static PetscErrorCode  MatMFFDSetFunctioni_MFFD(Mat mat,FCN2 funci)
 
   PetscFunctionBegin;
   ctx->funci = funci;
-  /* allow users to compose their own getdiagonal and allow MatHasOperation return false if the two functions pointers are not set */
-  if (!mat->ops->getdiagonal || mat->ops->getdiagonal == MatGetDiagonal_MFFD) {
-    mat->ops->getdiagonal = mat->ops->getdiagonal ? ( funci ? mat->ops->getdiagonal : NULL) :
-                                                    ( (funci && ctx->funcisetbase) ? MatGetDiagonal_MFFD : NULL);
+  /* allow users to compose their own getdiagonal and allow MatHasOperation
+     to return false if the two functions pointers are not set */
+  if (!mat->ops->getdiagonal && funci) {
+    mat->ops->getdiagonal == MatGetDiagonal_MFFD;
   }
   PetscFunctionReturn(0);
 }
@@ -232,16 +232,6 @@ static PetscErrorCode MatDestroy_MFFD(Mat mat)
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDSetCheckh_C",NULL);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDSetPeriod_C",NULL);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)mat,"MatMFFDResetHHistory_C",NULL);CHKERRQ(ierr);
-  PetscFunctionReturn(0);
-}
-
-static PetscErrorCode MatSetUp_MFFD(Mat mat)
-{
-  PetscErrorCode ierr;
-
-  PetscFunctionBegin;
-  ierr = PetscLayoutSetUp(mat->rmap);CHKERRQ(ierr);
-  ierr = PetscLayoutSetUp(mat->cmap);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
 
@@ -421,8 +411,9 @@ PetscErrorCode MatGetDiagonal_MFFD(Mat mat,Vec a)
   PetscInt       i,rstart,rend;
 
   PetscFunctionBegin;
-  if (!ctx->funci) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Missing Functioni function");
-  if (!ctx->funcisetbase) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Missing FunctioniBase function");
+  if (!ctx->func) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_ARG_WRONGSTATE,"Requires calling MatMFFDSetFunction() first");
+  if (!ctx->funci) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_ARG_WRONGSTATE,"Requires calling MatMFFDSetFunctioni() first");
+  if (!ctx->funcisetbase) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_ARG_WRONGSTATE,"Requires calling MatMFFDSetFunctioniBase() first");
   w    = ctx->w;
   U    = ctx->current_u;
   ierr = (*ctx->func)(ctx->funcctx,U,a);CHKERRQ(ierr);
@@ -703,7 +694,6 @@ PETSC_EXTERN PetscErrorCode MatCreate_MFFD(Mat A)
 
   A->ops->mult            = MatMult_MFFD;
   A->ops->destroy         = MatDestroy_MFFD;
-  A->ops->setup           = MatSetUp_MFFD;
   A->ops->view            = MatView_MFFD;
   A->ops->assemblyend     = MatAssemblyEnd_MFFD;
   A->ops->scale           = MatScale_MFFD;
@@ -895,7 +885,7 @@ PetscErrorCode  MatMFFDSetFunction(Mat mat,PetscErrorCode (*func)(void*,Vec,Vec)
     If you use this you MUST call MatAssemblyBegin()/MatAssemblyEnd() on the matrix free
     matrix inside your compute Jacobian routine.
     This function is necessary to compute the diagonal of the matrix.
-
+    funci must not contain any MPI call as it is called inside a loop on the local portion of the vector.
 
 .keywords: SNES, matrix-free, function
 
