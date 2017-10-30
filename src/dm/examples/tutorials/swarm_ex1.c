@@ -5,8 +5,8 @@ static char help[] = "Tests DMSwarm\n\n";
 #include <petscdmda.h>
 #include <petscdmswarm.h>
 
-PetscErrorCode DMSwarmCollect_General(DM,PetscErrorCode (*)(DM,void*,PetscInt*,PetscInt**),size_t,void*,PetscInt*);
-PetscErrorCode DMSwarmCollect_DMDABoundingBox(DM,PetscInt*);
+PETSC_EXTERN PetscErrorCode DMSwarmCollect_General(DM,PetscErrorCode (*)(DM,void*,PetscInt*,PetscInt**),size_t,void*,PetscInt*);
+PETSC_EXTERN PetscErrorCode DMSwarmCollect_DMDABoundingBox(DM,PetscInt*);
 
 PetscErrorCode ex1_1(void)
 {
