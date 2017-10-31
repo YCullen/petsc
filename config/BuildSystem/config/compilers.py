@@ -214,6 +214,10 @@ class Configure(config.base.Configure):
         if arg == '-long_double':
           continue
         # if options of type -L foobar
+        if arg == '-lto_library':
+          lib = argIter.next()
+          self.logPrint('Skipping Apple LLVM linker option -lto_library '+lib)
+          continue
         if arg == '-L':
           lib = argIter.next()
           self.logPrint('Found -L '+lib, 4, 'compilers')
@@ -478,6 +482,10 @@ class Configure(config.base.Configure):
           lib = argIter.next()
           self.logPrint('Found -L '+lib, 4, 'compilers')
           cxxlibs.append('-L'+lib)
+          continue
+        if arg == '-lto_library':
+          lib = argIter.next()
+          self.logPrint('Skipping Apple LLVM linker option -lto_library '+lib)
           continue
         # Check for full library name
         m = re.match(r'^/.*\.a$', arg)
@@ -841,6 +849,10 @@ class Configure(config.base.Configure):
         if arg.endswith('"') and arg[:-1].find('"') == -1:
           arg = arg[:-1]
 
+        if arg == '-lto_library':
+          lib = argIter.next()
+          self.logPrint('Skipping Apple LLVM linker option -lto_library '+lib)
+          continue
         # Check for full library name
         m = re.match(r'^/.*\.a$', arg)
         if m:
