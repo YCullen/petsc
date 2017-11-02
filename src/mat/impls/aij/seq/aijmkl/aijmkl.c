@@ -893,7 +893,7 @@ PETSC_INTERN PetscErrorCode MatConvert_SeqAIJ_SeqAIJMKL(Mat A,MatType type,MatRe
    MatCreateSeqAIJMKL - Creates a sparse matrix of type SEQAIJMKL.
    This type inherits from AIJ and is largely identical, but uses sparse BLAS 
    routines from Intel MKL whenever possible.
-   MatMult, MatMultAdd, MatMultTranspose, and MatMultTransposeAdd 
+   MatMult, MatMultAdd, MatMultTranspose, MatMultTransposeAdd, MatMatMult, and MatTransposeMatMult 
    operations are currently supported.
    If the installed version of MKL supports the "SpMV2" sparse 
    inspector-executor routines, then those are used by default.
@@ -912,7 +912,8 @@ PETSC_INTERN PetscErrorCode MatConvert_SeqAIJ_SeqAIJMKL(Mat A,MatType type,MatRe
 .  A - the matrix
 
    Options Database Keys:
-.  -mat_aijmkl_no_spmv2 - disables use of the SpMV2 inspector-executor routines
++  -mat_aijmkl_no_spmv2 - disable use of the SpMV2 inspector-executor routines
+-  -mat_aijmkl_eager_inspection - perform MKL "inspection" phase upon matrix assembly; default is to do "lazy" inspection, performing this step the first time the matrix is applied
 
    Notes:
    If nnz is given then nz is ignored
