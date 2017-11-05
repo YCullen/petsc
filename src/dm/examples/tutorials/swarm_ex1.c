@@ -230,8 +230,8 @@ PetscErrorCode ex1_3(void)
     for (j=js; j<js+nj; j++) {
       for (i=is; i<is+ni; i++) {
         PetscReal xp,yp;
-        xp = LA_coor[j][i].x;
-        yp = LA_coor[j][i].y;
+        xp = PetscRealPart(LA_coor[j][i].x);
+        yp = PetscRealPart(LA_coor[j][i].y);
         array_x[4*cnt+0] = xp - 0.05; if (array_x[4*cnt+0] < -1.0) { array_x[4*cnt+0] = -1.0+1.0e-12; }
         array_x[4*cnt+1] = xp + 0.05; if (array_x[4*cnt+1] > 1.0)  { array_x[4*cnt+1] =  1.0-1.0e-12; }
         array_x[4*cnt+2] = xp - 0.05; if (array_x[4*cnt+2] < -1.0) { array_x[4*cnt+2] = -1.0+1.0e-12; }
@@ -392,8 +392,8 @@ PetscErrorCode ex1_4(void)
       for (i=is; i<is+ni; i++) {
         PetscReal xp,yp;
 
-        xp = LA_coor[j][i].x;
-        yp = LA_coor[j][i].y;
+        xp = PetscRealPart(LA_coor[j][i].x);
+        yp = PetscRealPart(LA_coor[j][i].y);
         array_x[4*cnt+0] = xp - dx*0.1; /*if (array_x[4*cnt+0] < -1.0) { array_x[4*cnt+0] = -1.0+1.0e-12; }*/
         array_x[4*cnt+1] = xp + dx*0.1; /*if (array_x[4*cnt+1] > 1.0)  { array_x[4*cnt+1] =  1.0-1.0e-12; }*/
         array_x[4*cnt+2] = xp - dx*0.1; /*if (array_x[4*cnt+2] < -1.0) { array_x[4*cnt+2] = -1.0+1.0e-12; }*/
